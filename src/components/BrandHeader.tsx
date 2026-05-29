@@ -1,19 +1,48 @@
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { COLORS } from "../theme";
 
-export function BrandHeader() {
+type BrandHeaderProps = {
+  badgeLabel?: string;
+  onBadgePress?: () => void;
+  onMenuPress?: () => void;
+};
+
+export function BrandHeader({
+  badgeLabel = "Profile",
+  onBadgePress,
+  onMenuPress,
+}: BrandHeaderProps) {
   return (
     <View style={styles.row}>
+      {onMenuPress ? (
+        <Pressable
+          accessibilityLabel="Open menu"
+          accessibilityRole="button"
+          onPress={onMenuPress}
+          style={styles.menuButton}
+        >
+          <View style={styles.menuLine} />
+          <View style={styles.menuLine} />
+          <View style={styles.menuLine} />
+        </Pressable>
+      ) : null}
+
       <View style={styles.copy}>
         <Text style={styles.kicker}>Wallet</Text>
         <Text style={styles.title}>HYPA HYPA</Text>
         <Text style={styles.subtitle}>Buy, stake, and track HYPE in one place.</Text>
       </View>
 
-      <View style={styles.badge}>
-        <Text style={styles.badgeText}>Live</Text>
-      </View>
+      <Pressable
+        accessibilityLabel={badgeLabel}
+        accessibilityRole={onBadgePress ? "button" : undefined}
+        disabled={!onBadgePress}
+        onPress={onBadgePress}
+        style={styles.badge}
+      >
+        <Text style={styles.badgeText}>{badgeLabel}</Text>
+      </Pressable>
     </View>
   );
 }
@@ -24,10 +53,26 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
   },
+  menuButton: {
+    alignItems: "center",
+    backgroundColor: COLORS.blue,
+    borderColor: COLORS.black,
+    borderWidth: 3,
+    gap: 5,
+    justifyContent: "center",
+    marginRight: 12,
+    minHeight: 48,
+    paddingHorizontal: 11,
+  },
+  menuLine: {
+    backgroundColor: COLORS.white,
+    height: 4,
+    width: 18,
+  },
   copy: {
     flex: 1,
     gap: 2,
-    paddingRight: 12,
+    paddingRight: 10,
   },
   kicker: {
     color: COLORS.blue,

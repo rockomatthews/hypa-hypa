@@ -21,6 +21,20 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": "Unlock HYPA HYPA to access your private wallet."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Let HYPA HYPA access your photos so you can set a profile image stored only on this device."
+        }
+      ]
+    ]
   }
 }

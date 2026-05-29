@@ -1,34 +1,63 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { AddressWithCopy } from "../components/AddressWithCopy";
 import { BrandHeader } from "../components/BrandHeader";
 import { ComicCard } from "../components/ComicCard";
 import { COLORS } from "../theme";
 
 type PortfolioScreenProps = {
-  onOpenTrade: (context?: "buy" | "stake" | "rewards") => void;
+  hypeBalance: string;
+  isBalanceLoading: boolean;
+  onCopyAddress: () => Promise<void>;
+  onOpenSwap: () => void;
+  walletAddress?: `0x${string}`;
 };
 
-const holdings = [
-  { accent: "yellow", symbol: "HYPE", name: "Spot balance", amount: "4,280.00", value: "$11,936.40", action: "buy" },
-  { accent: "blue", symbol: "USDC", name: "Buying power", amount: "2,460.00", value: "$2,460.00", action: "buy" },
-  { accent: "blue", symbol: "stHYPE", name: "Delegated position", amount: "1,204.72", value: "$3,921.10", action: "stake" },
-] as const;
+export function PortfolioScreen({
+  hypeBalance,
+  isBalanceLoading,
+  onCopyAddress,
+  onOpenSwap,
+  walletAddress,
+}: PortfolioScreenProps) {
+  const holdings = [
+    {
+      accent: "yellow",
+      symbol: "HYPE",
+      name: "HyperEVM balance",
+      amount: isBalanceLoading ? "Loading..." : hypeBalance,
+      value: walletAddress ? "Live wallet" : "Not funded",
+    },
+    {
+      accent: "blue",
+      symbol: "ADDR",
+      name: "Receive wallet",
+      amount: walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : "Pending",
+      value: "Private",
+    },
+    {
+      accent: "blue",
+      symbol: "stHYPE",
+      name: "Delegated position",
+      amount: "Coming next",
+      value: "HyperCore",
+    },
+  ] as const;
 
-export function PortfolioScreen({ onOpenTrade }: PortfolioScreenProps) {
   return (
     <View style={styles.screen}>
       <View style={styles.content}>
         <BrandHeader />
 
         <Text style={styles.pageTitle}>Portfolio</Text>
-        <Text style={styles.pageMeta}>Spot, buying power, and delegated HYPE.</Text>
+        <Text style={styles.pageMeta}>Live device wallet status plus HyperCore next steps.</Text>
 
         <View style={styles.list}>
           {holdings.map((holding) => (
             <Pressable
               accessibilityRole="button"
               key={holding.symbol}
-              onPress={() => onOpenTrade(holding.action)}
+              onPress={onOpenSwap}
             >
               <ComicCard accent={holding.accent} style={styles.rowCard}>
                 <View style={styles.rowTop}>
@@ -65,8 +94,16 @@ export function PortfolioScreen({ onOpenTrade }: PortfolioScreenProps) {
                         holding.accent === "blue" ? styles.blueText : null,
                       ]}
                     >
-                      {holding.amount}
+                      {holding.symbol === "ADDR" ? "" : holding.amount}
                     </Text>
+                    {holding.symbol === "ADDR" ? (
+                      <AddressWithCopy
+                        address={walletAddress}
+                        color={holding.accent === "blue" ? "white" : "black"}
+                        onCopyAddress={onCopyAddress}
+                        size="sm"
+                      />
+                    ) : null}
                   </View>
                 </View>
               </ComicCard>
@@ -137,6 +174,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     marginTop: 4,
+    minHeight: 18,
   },
   blueText: {
     color: COLORS.white,
