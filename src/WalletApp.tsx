@@ -1,7 +1,15 @@
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import {
+  AppState,
+  type AppStateStatus,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import * as Clipboard from "expo-clipboard";
+import { formatEther } from "viem";
 import {
   SafeAreaProvider,
   useSafeAreaInsets,
@@ -11,12 +19,16 @@ import { AppErrorBoundary } from "./components/AppErrorBoundary";
 import { AppIcon, type AppIconName } from "./components/AppIcon";
 import { BrandMark } from "./components/BrandMark";
 import { SquareIconButton } from "./components/SquareIconButton";
+import { CoinDetailScreen } from "./screens/CoinDetailScreen";
 import { DepositScreen } from "./screens/DepositScreen";
 import { HomeScreen } from "./screens/HomeScreen";
+import { LaunchScreen } from "./screens/LaunchScreen";
 import { LiveScreen } from "./screens/LiveScreen";
 import { useHypeBalance } from "./hooks/useHypeBalance";
+import { appendWalletActivity, useWalletActivityLog } from "./lib/activityLog";
 import { useDeviceWallet } from "./lib/deviceWallet";
 import { useProfilePhoto } from "./lib/profilePhoto";
+import { useWalletProfile } from "./lib/walletProfile";
 import { PrivateWalletOnboardingScreen } from "./screens/PrivateWalletOnboardingScreen";
 import { ProfileScreen } from "./screens/ProfileScreen";
 import { ReceiveScreen } from "./screens/ReceiveScreen";
@@ -27,7 +39,7 @@ import { StakeScreen } from "./screens/StakeScreen";
 import { SwapScreen } from "./screens/SwapScreen";
 import { COLORS } from "./theme";
 
-type TabKey = "home" | "search" | "swap" | "live" | "stake" | "profile";
+type TabKey = "home" | "search" | "swap" | "live" | "stake" | "profile" | "coinDetail";
 type ModalKey = "deposit" | "receive" | "send";
 type DrawerAction = { label: string; tab: TabKey };
 
@@ -64,6 +76,7 @@ function WalletGate() {
   const walletAddress = wallet?.address;
   const {
     balanceLabel,
+    balanceWei,
     error: balanceError,
     isLoading: isBalanceLoading,
     refresh,
@@ -97,6 +110,7 @@ function WalletGate() {
     <AppShell
       balanceError={balanceError}
       balanceLabel={balanceLabel}
+      evmHypeAmount={formatEther(balanceWei)}
       isBalanceLoading={isBalanceLoading}
       isRevealingRecoveryPhrase={isRevealingRecoveryPhrase}
       onCopyAddress={() =>
@@ -104,7 +118,7 @@ function WalletGate() {
           ? Clipboard.setStringAsync(walletAddress).then(() => undefined)
           : Promise.resolve()
       }
-      onRefreshBalance={() => void refresh()}
+      onRefreshBalance={refresh}
       onRemoveWallet={() => void removeWallet()}
       onRevealRecoveryPhrase={() => void revealRecoveryPhrase()}
       usesBiometricSecurity={wallet.usesBiometricSecurity}
@@ -117,10 +131,11 @@ function WalletGate() {
 type AppShellProps = {
   balanceError: string | null;
   balanceLabel: string;
+  evmHypeAmount: string;
   isBalanceLoading: boolean;
   isRevealingRecoveryPhrase: boolean;
   onCopyAddress: () => Promise<void>;
-  onRefreshBalance: () => void;
+  onRefreshBalance: () => Promise<void>;
   onRemoveWallet: () => void;
   onRevealRecoveryPhrase: () => void;
   usesBiometricSecurity: boolean;
@@ -131,6 +146,7 @@ type AppShellProps = {
 function AppShell({
   balanceError,
   balanceLabel,
+  evmHypeAmount,
   isBalanceLoading,
   isRevealingRecoveryPhrase,
   onCopyAddress,
@@ -144,6 +160,9 @@ function AppShell({
   const [activeTab, setActiveTab] = useState<TabKey>("home");
   const [activeModal, setActiveModal] = useState<ModalKey | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [detailReturnTab, setDetailReturnTab] = useState<Extract<TabKey, "home" | "search">>("search");
+  const [selectedCoinTokenId, setSelectedCoinTokenId] = useState<string | null>(null);
+  const [swapSelectionTokenId, setSwapSelectionTokenId] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
   const {
     clearProfilePhoto,
@@ -152,11 +171,40 @@ function AppShell({
     pickProfilePhoto,
     profilePhotoUri,
   } = useProfilePhoto();
+  const {
+    activity,
+    error: activityError,
+    refresh: refreshActivity,
+  } = useWalletActivityLog(walletAddress);
+  const {
+    error: profileError,
+    isSaving: isSavingProfile,
+    profile,
+    saveUsername,
+  } = useWalletProfile(walletAddress);
 
   const openTab = (tab: TabKey) => {
     setActiveTab(tab);
     setActiveModal(null);
     setDrawerOpen(false);
+  };
+
+  const openCoinDetail = (tokenId: string, returnTab: Extract<TabKey, "home" | "search">) => {
+    setSelectedCoinTokenId(tokenId);
+    setDetailReturnTab(returnTab);
+    openTab("coinDetail");
+  };
+
+  const openSwap = (tokenId?: string | null) => {
+    setSwapSelectionTokenId(tokenId ?? null);
+    openTab("swap");
+  };
+
+  const recordActivity = async (
+    entry: Parameters<typeof appendWalletActivity>[0],
+  ) => {
+    await appendWalletActivity(entry, walletAddress);
+    await refreshActivity();
   };
 
   const openModal = (modal: ModalKey) => {
@@ -170,32 +218,62 @@ function AppShell({
         return (
           <HomeScreen
             balanceError={balanceError}
+            evmHypeAmount={evmHypeAmount}
             hypeBalance={balanceLabel}
             isBalanceLoading={isBalanceLoading}
             onCopyAddress={onCopyAddress}
             onOpenDeposit={() => openModal("deposit")}
             onOpenDrawer={() => setDrawerOpen(true)}
+            onOpenCoinDetails={(tokenId) => openCoinDetail(tokenId, "home")}
             onOpenProfile={() => openTab("profile")}
             onOpenReceive={() => openModal("receive")}
+            onRefreshBalances={onRefreshBalance}
             onOpenSearch={() => openTab("search")}
             onOpenSend={() => openModal("send")}
-            onOpenSwap={() => openTab("swap")}
+            onOpenSwap={() => openSwap()}
             profilePhotoUri={profilePhotoUri}
+            username={profile.username}
             walletAddress={walletAddress}
             walletError={walletError}
+            walletActivity={activity}
+            walletActivityError={activityError}
+            onRefreshActivity={refreshActivity}
           />
         );
       case "search":
-        return <SearchScreen onOpenSwap={() => openTab("swap")} walletAddress={walletAddress} />;
+        return (
+          <SearchScreen
+            onOpenCoinDetails={(tokenId) => openCoinDetail(tokenId, "search")}
+            walletAddress={walletAddress}
+          />
+        );
+      case "coinDetail":
+        return (
+          <CoinDetailScreen
+            onBack={() => openTab(detailReturnTab)}
+            onOpenSwap={openSwap}
+            tokenId={selectedCoinTokenId}
+            walletAddress={walletAddress}
+          />
+        );
       case "swap":
-        return <SwapScreen walletAddress={walletAddress} />;
+        return (
+          <SwapScreen
+            initialToTokenId={swapSelectionTokenId}
+            onRecordActivity={recordActivity}
+            onRefreshWalletBalance={onRefreshBalance}
+            walletAddress={walletAddress}
+          />
+        );
       case "live":
         return <LiveScreen />;
       case "stake":
-        return <StakeScreen walletAddress={walletAddress} />;
+        return <StakeScreen onRecordActivity={recordActivity} walletAddress={walletAddress} />;
       case "profile":
         return (
           <ProfileScreen
+            activity={activity}
+            activityError={activityError}
             isRevealingRecoveryPhrase={isRevealingRecoveryPhrase}
             isSavingProfilePhoto={isSavingProfilePhoto}
             onClearProfilePhoto={clearProfilePhoto}
@@ -205,6 +283,10 @@ function AppShell({
             onRevealRecoveryPhrase={onRevealRecoveryPhrase}
             profilePhotoError={profilePhotoError}
             profilePhotoUri={profilePhotoUri}
+            profileError={profileError}
+            isSavingProfile={isSavingProfile}
+            onSaveUsername={saveUsername}
+            username={profile.username}
             usesBiometricSecurity={usesBiometricSecurity}
             walletAddress={walletAddress}
           />
@@ -222,6 +304,7 @@ function AppShell({
             onClose={() => setActiveModal(null)}
             onCopyAddress={onCopyAddress}
             onOpenReceive={() => setActiveModal("receive")}
+            onRefreshBalance={onRefreshBalance}
             walletAddress={walletAddress}
           />
         );
@@ -238,6 +321,8 @@ function AppShell({
           <SendScreen
             onClose={() => setActiveModal(null)}
             onCopyAddress={onCopyAddress}
+            onRecordActivity={recordActivity}
+            onSent={onRefreshBalance}
             walletAddress={walletAddress}
           />
         );
@@ -293,7 +378,7 @@ function AppShell({
           ]}
         >
           {tabs.map((tab) => {
-            const isActive = activeTab === tab.key;
+            const isActive = activeTab === tab.key || (activeTab === "coinDetail" && detailReturnTab === tab.key);
 
             return (
               <SquareIconButton
@@ -316,10 +401,38 @@ function AppShell({
 }
 
 export function WalletApp() {
+  const [hasResumed, setHasResumed] = useState(false);
+  const appState = useRef<AppStateStatus>(AppState.currentState);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState) => {
+      const wasClosedOrBackgrounded = appState.current.match(/inactive|background/);
+
+      if (wasClosedOrBackgrounded && nextAppState === "active") {
+        setHasResumed(false);
+      }
+
+      appState.current = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
   return (
     <AppErrorBoundary>
       <SafeAreaProvider>
-        <WalletGate />
+        <View style={styles.screen}>
+          <View
+            accessibilityElementsHidden={!hasResumed}
+            importantForAccessibility={hasResumed ? "auto" : "no-hide-descendants"}
+            style={styles.screen}
+          >
+            <WalletGate />
+          </View>
+          {!hasResumed ? <LaunchScreen onResume={() => setHasResumed(true)} /> : null}
+        </View>
       </SafeAreaProvider>
     </AppErrorBoundary>
   );

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { wordlist } from "@scure/bip39/wordlists/english";
 import * as SecureStore from "expo-secure-store";
-import { generateMnemonic, mnemonicToAccount } from "viem/accounts";
+import { type HDAccount, generateMnemonic, mnemonicToAccount } from "viem/accounts";
 
 const WALLET_METADATA_KEY = "hypa_wallet_meta_v1";
 const WALLET_MNEMONIC_KEY = "hypa_wallet_mnemonic_v1";
@@ -15,6 +15,13 @@ const PROTECTED_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
   requireAuthentication: SecureStore.canUseBiometricAuthentication(),
 };
+
+function getProtectedOptions(authenticationPrompt: string) {
+  return {
+    ...PROTECTED_OPTIONS,
+    authenticationPrompt,
+  } satisfies SecureStore.SecureStoreOptions;
+}
 
 export type DeviceWalletMeta = {
   address: `0x${string}`;
@@ -61,6 +68,21 @@ function parseWalletMeta(rawValue: string | null): DeviceWalletMeta | null {
   } catch {
     return null;
   }
+}
+
+export async function unlockDeviceWalletAccount(
+  authenticationPrompt = "Unlock HYPA HYPA to use your wallet.",
+): Promise<HDAccount> {
+  const storedPhrase = await SecureStore.getItemAsync(
+    WALLET_MNEMONIC_KEY,
+    getProtectedOptions(authenticationPrompt),
+  );
+
+  if (!storedPhrase) {
+    throw new Error("Wallet recovery phrase is unavailable on this device.");
+  }
+
+  return mnemonicToAccount(storedPhrase);
 }
 
 export function useDeviceWallet(): DeviceWalletState {

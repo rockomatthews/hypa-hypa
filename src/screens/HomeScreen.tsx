@@ -1,28 +1,36 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AddressWithCopy } from "../components/AddressWithCopy";
-import { AppIcon } from "../components/AppIcon";
-import { BrandMark } from "../components/BrandMark";
+import { CoinMark } from "../components/CoinMark";
 import { ProfileAvatar } from "../components/ProfileAvatar";
 import { SquareIconButton } from "../components/SquareIconButton";
 import { useHyperCoreSpot } from "../hooks/useHyperCoreSpot";
+import { type WalletActivityItem, formatActivityDate } from "../lib/activityLog";
 import { COLORS } from "../theme";
 
 type HomeScreenProps = {
   balanceError: string | null;
+  evmHypeAmount: string;
   hypeBalance: string;
   isBalanceLoading: boolean;
   onCopyAddress: () => Promise<void>;
   onOpenDeposit: () => void;
   onOpenDrawer: () => void;
+  onOpenCoinDetails: (tokenId: string) => void;
   onOpenProfile: () => void;
   onOpenReceive: () => void;
+  onRefreshActivity?: () => Promise<void>;
+  onRefreshBalances: () => Promise<void>;
   onOpenSearch: () => void;
   onOpenSend: () => void;
-  onOpenSwap: () => void;
+  onOpenSwap: (tokenId?: string | null) => void;
   profilePhotoUri?: string | null;
+  username?: string;
   walletAddress?: `0x${string}`;
+  walletActivity?: WalletActivityItem[];
+  walletActivityError?: string | null;
   walletError: string | null;
 };
 
@@ -35,24 +43,63 @@ const actionItems = [
 
 type ActionKey = (typeof actionItems)[number]["key"];
 
+function formatUsd(value: number) {
+  return value.toLocaleString(undefined, {
+    currency: "USD",
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+    style: "currency",
+  });
+}
+
+function isPositiveAmount(amount: string) {
+  return amount.trim().startsWith("+");
+}
+
+function isNegativeAmount(amount: string) {
+  return amount.trim().startsWith("-");
+}
+
 export function HomeScreen({
   balanceError,
+  evmHypeAmount,
   hypeBalance,
   isBalanceLoading,
   onCopyAddress,
   onOpenDeposit,
   onOpenDrawer,
+  onOpenCoinDetails,
   onOpenProfile,
   onOpenReceive,
+  onRefreshActivity,
+  onRefreshBalances,
   onOpenSearch,
   onOpenSend,
   onOpenSwap,
   profilePhotoUri,
+  username,
   walletAddress,
+  walletActivity,
+  walletActivityError,
   walletError,
 }: HomeScreenProps) {
   const insets = useSafeAreaInsets();
-  const { balances, error: spotError, swapOptions } = useHyperCoreSpot(walletAddress);
+  const [activeSegment, setActiveSegment] = useState<"coins" | "activity">("coins");
+  const {
+    error: spotError,
+    isLoading: isSpotLoading,
+    refresh: refreshSpot,
+    swapOptions,
+  } = useHyperCoreSpot(walletAddress);
+
+  const isRefreshing = isBalanceLoading || isSpotLoading;
+  const handleRefresh = async () => {
+    await Promise.all([
+      onRefreshBalances(),
+      refreshSpot({ force: true }),
+      onRefreshActivity?.() ?? Promise.resolve(),
+    ]);
+  };
 
   const handleActionPress = (action: ActionKey) => {
     switch (action) {
@@ -73,30 +120,53 @@ export function HomeScreen({
     }
   };
 
+  const hypeSpotOption = swapOptions.find((option) => option.symbol === "HYPE") ?? null;
+  const hypeMidPrice = Number.parseFloat(hypeSpotOption?.midPrice ?? "0") || 0;
+  const evmHypeValueUsd = Number.parseFloat(evmHypeAmount || "0") * hypeMidPrice;
+  const spotPortfolioValueUsd = swapOptions
+    .filter((option) => option.isInWallet)
+    .reduce((total, option) => {
+      const amount = Number.parseFloat(option.balance);
+      const price =
+        option.symbol === "USDC"
+          ? 1
+          : Number.parseFloat(option.midPrice ?? "0");
+
+      if (!Number.isFinite(amount) || !Number.isFinite(price) || price <= 0) {
+        return total;
+      }
+
+      return total + amount * price;
+    }, 0);
+  const portfolioValueUsd = evmHypeValueUsd + spotPortfolioValueUsd;
+
   const coinRows = [
     {
-      context: "HyperEVM",
+      context: "Sendable wallet balance",
+      initials: "WH",
+      priceLabel: hypeSpotOption?.priceChangeLabel ?? "24H",
       symbol: "HYPE",
+      title: "Wallet HYPE",
+      tokenId: hypeSpotOption?.tokenId ?? "HYPE",
       value: isBalanceLoading ? "Loading..." : `${hypeBalance} HYPE`,
     },
     ...swapOptions
       .filter((option) => option.isInWallet)
-      .slice(0, 4)
       .map((option) => ({
-        context: option.dailyVolume ? `Vol ${option.dailyVolume}` : option.displayName,
+        context:
+          option.symbol === "HYPE"
+            ? "Ready to swap"
+            : option.marketCapLabel ?? option.displayName,
+        initials: option.symbol === "HYPE" ? "TH" : option.initials,
+        priceLabel: option.priceChangeLabel ?? "24H",
         symbol: option.symbol,
+        title: option.symbol === "HYPE" ? "Trading HYPE" : option.symbol,
+        tokenId: option.tokenId,
         value: `${option.balanceLabel} ${option.symbol}`,
       })),
   ];
 
-  const hasSpotFunds = balances.some((balance) => Number.parseFloat(balance.total) > 0);
-  const statusText =
-    walletError ??
-    balanceError ??
-    spotError ??
-    (hasSpotFunds
-      ? "Your spot wallet is live. Use Swap to route into other Hyperliquid assets."
-      : "Your private wallet can already receive and hold HYPE on HyperEVM.");
+  const statusText = walletError ?? balanceError ?? spotError ?? null;
 
   return (
     <View style={styles.screen}>
@@ -105,6 +175,19 @@ export function HomeScreen({
           styles.content,
           { paddingTop: Math.max(insets.top, 12) + 8, paddingBottom: 28 },
         ]}
+        refreshControl={
+          <RefreshControl
+            colors={[COLORS.blue]}
+            onRefresh={() => {
+              void handleRefresh();
+            }}
+            progressBackgroundColor={COLORS.yellow}
+            refreshing={isRefreshing}
+            tintColor={COLORS.yellow}
+            title="Refreshing HYPA HYPA"
+            titleColor={COLORS.yellow}
+          />
+        }
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.headerRow}>
@@ -122,7 +205,7 @@ export function HomeScreen({
 
             <View>
               <Text style={styles.headerTitle}>Home</Text>
-              <Text style={styles.headerSubtitle}>HYPA HYPA</Text>
+              <Text style={styles.headerSubtitle}>{username ? `@${username}` : "Set username"}</Text>
             </View>
           </View>
 
@@ -142,25 +225,18 @@ export function HomeScreen({
         </View>
 
         <View style={styles.hero}>
-          <BrandMark size={76} />
-          <View style={styles.heroCopy}>
-            <Text
-              adjustsFontSizeToFit
-              numberOfLines={1}
-              style={styles.balanceValue}
-            >
-              {isBalanceLoading ? "Loading..." : hypeBalance} HYPE
-            </Text>
-            <Text style={styles.balanceSubcopy}>Private HyperEVM wallet balance</Text>
-            <View style={styles.addressWrap}>
-              <Text style={styles.addressLabel}>Wallet address</Text>
-              <AddressWithCopy
-                address={walletAddress}
-                color="white"
-                onCopyAddress={onCopyAddress}
-                size="md"
-              />
-            </View>
+          <Text adjustsFontSizeToFit numberOfLines={1} style={styles.balanceValue}>
+            {isBalanceLoading ? "Loading..." : formatUsd(portfolioValueUsd)}
+          </Text>
+          <Text style={styles.balanceSubcopy}>Total portfolio balance across all listed coins</Text>
+          <View style={styles.addressWrap}>
+            <Text style={styles.addressLabel}>Wallet address</Text>
+            <AddressWithCopy
+              address={walletAddress}
+              color="white"
+              onCopyAddress={onCopyAddress}
+              size="md"
+            />
           </View>
         </View>
 
@@ -180,62 +256,86 @@ export function HomeScreen({
           ))}
         </View>
 
-        <View style={styles.banner}>
-          <View style={styles.bannerIcon}>
-            <Text style={styles.bannerIconText}>H</Text>
-          </View>
-
-          <View style={styles.bannerCopy}>
-            <Text style={styles.bannerTitle}>Hold HYPE. Route into staking when you are ready.</Text>
-            <Text style={styles.bannerBody}>{statusText}</Text>
-          </View>
-        </View>
+        <Text style={styles.portfolioMeta}>
+          {statusText
+            ? statusText
+            : `${coinRows.length} coins are included in this total. Tap any coin to research it first.`}
+        </Text>
 
         <View style={styles.segmentRow}>
-          <Text style={styles.segmentActive}>Coins</Text>
-          <Text style={styles.segmentText}>Collectibles</Text>
-          <Text style={styles.segmentText}>Activity</Text>
+          <Pressable accessibilityRole="button" onPress={() => setActiveSegment("coins")}>
+            <Text style={activeSegment === "coins" ? styles.segmentActive : styles.segmentText}>Coins</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={() => setActiveSegment("activity")}>
+            <Text style={activeSegment === "activity" ? styles.segmentActive : styles.segmentText}>Activity</Text>
+          </Pressable>
         </View>
 
-        <View style={styles.filterRow}>
-          <View style={styles.filterPill}>
-            <Text style={styles.filterText}>HyperEVM</Text>
-          </View>
-          <View style={styles.filterPill}>
-            <Text style={styles.filterText}>Wallet</Text>
-          </View>
-          <View style={styles.filterPill}>
-            <Text style={styles.filterText}>Live</Text>
-          </View>
-        </View>
+        {activeSegment === "coins" ? (
+          <View style={styles.assetList}>
+            {coinRows.map((row, index) => (
+              <Pressable
+                accessibilityRole="button"
+                key={`${row.symbol}-${index}`}
+                onPress={() => onOpenCoinDetails(row.tokenId)}
+                style={styles.assetRow}
+              >
+                <CoinMark
+                  initials={row.initials}
+                  size={50}
+                  symbol={row.title === "Wallet HYPE" || row.title === "Trading HYPE" ? row.title : row.symbol}
+                />
 
-        <View style={styles.assetList}>
-          {coinRows.map((row, index) => (
-            <Pressable
-              accessibilityRole="button"
-              key={`${row.symbol}-${index}`}
-              onPress={onOpenSwap}
-              style={styles.assetRow}
-            >
-              <View style={styles.assetBadge}>
-                {row.symbol === "HYPE" ? (
-                  <Text style={styles.assetBadgeText}>H</Text>
-                ) : (
-                  <AppIcon color={COLORS.black} name="swap" size={18} />
-                )}
-              </View>
+                <View style={styles.assetCopy}>
+                  <Text style={styles.assetTitle}>{row.title}</Text>
+                  <Text style={styles.assetSubtitle}>{row.context}</Text>
+                </View>
 
-              <View style={styles.assetCopy}>
-                <Text style={styles.assetTitle}>{row.symbol}</Text>
-                <Text style={styles.assetSubtitle}>{row.context}</Text>
-              </View>
+                <View style={styles.assetMeta}>
+                  <Text numberOfLines={1} style={styles.assetValue}>
+                    {row.value}
+                  </Text>
+                  <Text style={styles.assetPriceLabel}>{row.priceLabel}</Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        ) : (
+          <View style={styles.assetList}>
+            {walletActivityError ? <Text style={styles.activityError}>{walletActivityError}</Text> : null}
+            {walletActivity?.length ? (
+              walletActivity.map((item) => (
+                <View key={item.id} style={styles.activityRow}>
+                  <View style={styles.activityMark}>
+                    <Text style={styles.activityMarkText}>
+                      {item.type === "receive_hype" ? "+" : item.type === "send_hype" ? "-" : "↔"}
+                    </Text>
+                  </View>
 
-              <Text numberOfLines={1} style={styles.assetValue}>
-                {row.value}
+                  <View style={styles.assetCopy}>
+                    <Text style={styles.assetTitle}>{item.title}</Text>
+                    <Text style={styles.assetSubtitle}>{item.detail}</Text>
+                    <Text style={styles.activityDate}>{formatActivityDate(item.createdAt)}</Text>
+                  </View>
+
+                  <Text
+                    style={[
+                      styles.activityAmount,
+                      isPositiveAmount(item.amount) ? styles.activityAmountPositive : null,
+                      isNegativeAmount(item.amount) ? styles.activityAmountNegative : null,
+                    ]}
+                  >
+                    {item.amount}
+                  </Text>
+                </View>
+              ))
+            ) : (
+              <Text style={styles.emptyActivity}>
+                No wallet activity yet. Deposits, sends, swaps, and moves to Trading will appear here.
               </Text>
-            </Pressable>
-          ))}
-        </View>
+            )}
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -280,11 +380,7 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
   },
   hero: {
-    gap: 16,
     marginTop: 28,
-  },
-  heroCopy: {
-    gap: 10,
   },
   balanceValue: {
     color: COLORS.white,
@@ -297,11 +393,12 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontSize: 16,
     fontWeight: "700",
+    marginTop: 10,
     opacity: 0.68,
   },
   addressWrap: {
     gap: 6,
-    marginTop: 4,
+    marginTop: 14,
   },
   addressLabel: {
     color: COLORS.yellow,
@@ -317,54 +414,18 @@ const styles = StyleSheet.create({
   actionTile: {
     flex: 1,
   },
-  banner: {
-    backgroundColor: COLORS.black,
-    borderColor: COLORS.yellow,
-    borderWidth: 3,
-    flexDirection: "row",
-    gap: 14,
-    marginTop: 22,
-    paddingHorizontal: 14,
-    paddingVertical: 16,
-  },
-  bannerIcon: {
-    alignItems: "center",
-    backgroundColor: COLORS.yellow,
-    borderColor: COLORS.blue,
-    borderWidth: 3,
-    height: 54,
-    justifyContent: "center",
-    width: 54,
-  },
-  bannerIconText: {
-    color: COLORS.black,
-    fontSize: 28,
-    fontWeight: "900",
-  },
-  bannerCopy: {
-    flex: 1,
-  },
-  bannerTitle: {
-    color: COLORS.white,
-    fontSize: 18,
-    fontWeight: "900",
-    lineHeight: 22,
-  },
-  bannerBody: {
+  portfolioMeta: {
     color: COLORS.white,
     fontSize: 13,
     fontWeight: "700",
-    lineHeight: 19,
-    marginTop: 8,
+    lineHeight: 18,
+    marginTop: 18,
     opacity: 0.72,
   },
   segmentRow: {
-    borderBottomColor: COLORS.yellow,
-    borderBottomWidth: 2,
     flexDirection: "row",
-    gap: 24,
-    marginTop: 28,
-    paddingBottom: 10,
+    gap: 28,
+    marginTop: 24,
   },
   segmentActive: {
     color: COLORS.white,
@@ -375,51 +436,19 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontSize: 18,
     fontWeight: "800",
-    opacity: 0.48,
-  },
-  filterRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 14,
-  },
-  filterPill: {
-    backgroundColor: COLORS.yellow,
-    borderColor: COLORS.black,
-    borderWidth: 3,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  filterText: {
-    color: COLORS.black,
-    fontSize: 12,
-    fontWeight: "900",
-    textTransform: "uppercase",
+    opacity: 0.5,
   },
   assetList: {
-    marginTop: 16,
+    marginTop: 12,
   },
   assetRow: {
     alignItems: "center",
-    borderBottomColor: COLORS.blue,
+    borderBottomColor: COLORS.yellow,
     borderBottomWidth: 2,
     flexDirection: "row",
     gap: 12,
-    minHeight: 78,
+    minHeight: 82,
     paddingVertical: 12,
-  },
-  assetBadge: {
-    alignItems: "center",
-    backgroundColor: COLORS.yellow,
-    borderColor: COLORS.blue,
-    borderWidth: 3,
-    height: 48,
-    justifyContent: "center",
-    width: 48,
-  },
-  assetBadgeText: {
-    color: COLORS.black,
-    fontSize: 22,
-    fontWeight: "900",
   },
   assetCopy: {
     flex: 1,
@@ -436,11 +465,78 @@ const styles = StyleSheet.create({
     marginTop: 4,
     opacity: 0.62,
   },
+  assetMeta: {
+    alignItems: "flex-end",
+    maxWidth: "44%",
+  },
   assetValue: {
     color: COLORS.white,
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "900",
-    maxWidth: "38%",
     textAlign: "right",
+  },
+  assetPriceLabel: {
+    color: COLORS.blue,
+    fontSize: 11,
+    fontWeight: "900",
+    marginTop: 4,
+    textTransform: "uppercase",
+  },
+  activityAmount: {
+    color: COLORS.white,
+    fontSize: 13,
+    fontWeight: "900",
+    maxWidth: "32%",
+    textAlign: "right",
+  },
+  activityAmountNegative: {
+    color: COLORS.white,
+  },
+  activityAmountPositive: {
+    color: COLORS.blue,
+  },
+  activityDate: {
+    color: COLORS.blue,
+    fontSize: 10,
+    fontWeight: "900",
+    marginTop: 5,
+    textTransform: "uppercase",
+  },
+  activityError: {
+    color: COLORS.yellow,
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 18,
+    marginTop: 12,
+  },
+  activityMark: {
+    alignItems: "center",
+    borderColor: COLORS.blue,
+    borderWidth: 3,
+    height: 46,
+    justifyContent: "center",
+    width: 46,
+  },
+  activityMarkText: {
+    color: COLORS.white,
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  activityRow: {
+    alignItems: "center",
+    borderBottomColor: COLORS.yellow,
+    borderBottomWidth: 2,
+    flexDirection: "row",
+    gap: 12,
+    minHeight: 82,
+    paddingVertical: 12,
+  },
+  emptyActivity: {
+    color: COLORS.white,
+    fontSize: 14,
+    fontWeight: "700",
+    lineHeight: 20,
+    marginTop: 12,
+    opacity: 0.72,
   },
 });

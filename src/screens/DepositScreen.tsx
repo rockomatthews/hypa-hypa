@@ -1,31 +1,71 @@
+import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AddressWithCopy } from "../components/AddressWithCopy";
 import { AppIcon } from "../components/AppIcon";
+import { useHypeBalance } from "../hooks/useHypeBalance";
 import { COLORS } from "../theme";
 
 type DepositScreenProps = {
   onClose: () => void;
   onCopyAddress: () => Promise<void>;
   onOpenReceive: () => void;
+  onRefreshBalance?: () => void;
   walletAddress?: `0x${string}`;
 };
 
-const keypadRows = [
-  ["1", "2", "3"],
-  ["4", "5", "6"],
-  ["7", "8", "9"],
-  [".", "0", "<"],
+const fundingSources = [
+  {
+    description: "You already hold HYPE or another asset in a different self-custody wallet.",
+    key: "wallet",
+    steps: [
+      "Copy your HYPA HYPA HyperEVM address.",
+      "Paste it into the sending wallet and confirm the network is HyperEVM.",
+      "Send native HYPE, then refresh after the transaction lands.",
+    ],
+    title: "Another wallet",
+  },
+  {
+    description: "You are withdrawing from a centralized exchange account.",
+    key: "exchange",
+    steps: [
+      "Use your HYPA HYPA address as the withdrawal destination.",
+      "Make sure the exchange supports native HYPE withdrawals to HyperEVM.",
+      "Start with a small test withdrawal before sending a larger amount.",
+    ],
+    title: "Exchange withdrawal",
+  },
+  {
+    description: "Someone else is sending you funds directly.",
+    key: "friend",
+    steps: [
+      "Open the receive QR so they can scan your address cleanly.",
+      "Ask them to send native HYPE on HyperEVM only.",
+      "Refresh your balance once they share the transaction hash.",
+    ],
+    title: "Friend transfer",
+  },
 ] as const;
 
 export function DepositScreen({
   onClose,
   onCopyAddress,
   onOpenReceive,
+  onRefreshBalance,
   walletAddress,
 }: DepositScreenProps) {
   const insets = useSafeAreaInsets();
+  const { balanceLabel, error, isLoading, refresh } = useHypeBalance(walletAddress);
+  const [selectedSourceKey, setSelectedSourceKey] =
+    useState<(typeof fundingSources)[number]["key"]>("wallet");
+  const selectedSource =
+    fundingSources.find((source) => source.key === selectedSourceKey) ?? fundingSources[0];
+
+  const handleRefresh = async () => {
+    await refresh();
+    onRefreshBalance?.();
+  };
 
   return (
     <View style={styles.screen}>
@@ -44,15 +84,40 @@ export function DepositScreen({
         </View>
 
         <View style={styles.segment}>
-          <Text style={styles.segmentLabel}>Fund with</Text>
-          <View style={styles.segmentActive}>
-            <Text style={styles.segmentActiveText}>Wallet</Text>
+          <Text style={styles.segmentLabel}>Funding source</Text>
+          <View style={styles.segmentChoiceRow}>
+            {fundingSources.map((source) => {
+              const isActive = source.key === selectedSourceKey;
+
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  key={source.key}
+                  onPress={() => setSelectedSourceKey(source.key)}
+                  style={[
+                    styles.segmentChoice,
+                    isActive ? styles.segmentActive : styles.segmentInactive,
+                  ]}
+                >
+                  <Text
+                    numberOfLines={1}
+                    style={isActive ? styles.segmentActiveText : styles.segmentInactiveText}
+                  >
+                    {source.title}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
         </View>
 
         <View style={styles.amountBlock}>
-          <Text style={styles.amountValue}>$0</Text>
-          <Text style={styles.amountMeta}>0 HYPE</Text>
+          <Text style={styles.amountValue}>{isLoading ? "..." : `${balanceLabel} HYPE`}</Text>
+          <Text style={styles.amountMeta}>Current wallet balance on HyperEVM</Text>
+          <Pressable accessibilityRole="button" onPress={() => void handleRefresh()} style={styles.refreshChip}>
+            <Text style={styles.refreshChipText}>Refresh balance</Text>
+          </Pressable>
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </View>
 
         <View style={styles.assetRow}>
@@ -62,7 +127,7 @@ export function DepositScreen({
 
           <View style={styles.assetCopy}>
             <Text style={styles.assetTitle}>HYPE</Text>
-            <Text style={styles.assetSubtitle}>Native HyperEVM deposit</Text>
+            <Text style={styles.assetSubtitle}>Native HyperEVM deposit only</Text>
           </View>
         </View>
 
@@ -74,23 +139,37 @@ export function DepositScreen({
             onCopyAddress={onCopyAddress}
             size="lg"
           />
+          <Text style={styles.addressHelp}>
+            Copy this address from another wallet or exchange, or open the receive QR for an easier scan flow.
+          </Text>
         </View>
 
-        <View style={styles.keypad}>
-          {keypadRows.map((row) => (
-            <View key={row.join("-")} style={styles.keypadRow}>
-              {row.map((key) => (
-                <Text key={key} style={styles.keypadKey}>
-                  {key}
-                </Text>
-              ))}
-            </View>
+        <View style={styles.stepsCard}>
+          <Text style={styles.stepsLabel}>{selectedSource.title}</Text>
+          <Text style={styles.stepIntro}>{selectedSource.description}</Text>
+          {selectedSource.steps.map((step, index) => (
+            <Text key={`${selectedSource.key}-${index}`} style={styles.stepLine}>
+              {index + 1}. {step}
+            </Text>
           ))}
         </View>
 
-        <Pressable accessibilityRole="button" onPress={onOpenReceive} style={styles.primaryButton}>
-          <Text style={styles.primaryButtonText}>Open receive QR</Text>
-        </Pressable>
+        <View style={styles.buttonRow}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void onCopyAddress()}
+            style={styles.secondaryButton}
+          >
+            <Text style={styles.secondaryButtonText}>Copy address</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={onOpenReceive} style={styles.primaryButton}>
+            <Text style={styles.primaryButtonText}>Open receive QR</Text>
+          </Pressable>
+        </View>
+
+        <Text style={styles.supportText}>
+          HYPA HYPA supports direct HYPE funding on HyperEVM now. This handoff keeps the deposit flow honest even before native fiat on-ramp and exchange deep links are built.
+        </Text>
       </View>
     </View>
   );
@@ -143,57 +222,100 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   segment: {
-    alignItems: "center",
     backgroundColor: COLORS.yellow,
     borderColor: COLORS.black,
     borderWidth: 3,
-    flexDirection: "row",
-    justifyContent: "space-between",
+    gap: 10,
     marginTop: 24,
     minHeight: 58,
-    paddingHorizontal: 12,
+    padding: 12,
   },
   segmentLabel: {
     color: COLORS.black,
-    fontSize: 15,
+    fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase",
+  },
+  segmentChoiceRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  segmentChoice: {
+    flex: 1,
+    minHeight: 44,
+    justifyContent: "center",
+    paddingHorizontal: 8,
   },
   segmentActive: {
     backgroundColor: COLORS.blue,
     borderColor: COLORS.yellow,
     borderWidth: 3,
-    paddingHorizontal: 18,
-    paddingVertical: 8,
+  },
+  segmentInactive: {
+    backgroundColor: COLORS.black,
+    borderColor: COLORS.blue,
+    borderWidth: 3,
   },
   segmentActiveText: {
     color: COLORS.white,
-    fontSize: 15,
+    fontSize: 12,
     fontWeight: "900",
+    textAlign: "center",
+    textTransform: "uppercase",
+  },
+  segmentInactiveText: {
+    color: COLORS.white,
+    fontSize: 12,
+    fontWeight: "900",
+    textAlign: "center",
     textTransform: "uppercase",
   },
   amountBlock: {
     alignItems: "center",
-    marginTop: 44,
+    marginTop: 38,
   },
   amountValue: {
     color: COLORS.white,
-    fontSize: 80,
+    fontSize: 46,
     fontWeight: "900",
-    lineHeight: 84,
+    lineHeight: 50,
+    textAlign: "center",
   },
   amountMeta: {
     color: COLORS.white,
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "700",
     marginTop: 8,
     opacity: 0.68,
+    textAlign: "center",
+  },
+  refreshChip: {
+    backgroundColor: COLORS.blue,
+    borderColor: COLORS.yellow,
+    borderWidth: 3,
+    marginTop: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  refreshChipText: {
+    color: COLORS.white,
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  errorText: {
+    color: COLORS.yellow,
+    fontSize: 12,
+    fontWeight: "800",
+    lineHeight: 16,
+    marginTop: 10,
+    textAlign: "center",
   },
   assetRow: {
     alignItems: "center",
     flexDirection: "row",
     gap: 12,
-    marginTop: 28,
+    marginTop: 24,
   },
   assetBadge: {
     alignItems: "center",
@@ -238,28 +360,51 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     textTransform: "uppercase",
   },
-  keypad: {
-    gap: 18,
-    marginTop: 34,
-  },
-  keypadRow: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-  },
-  keypadKey: {
+  addressHelp: {
     color: COLORS.white,
-    fontSize: 52,
-    fontWeight: "300",
-    minWidth: 70,
-    textAlign: "center",
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+    opacity: 0.76,
+  },
+  stepsCard: {
+    backgroundColor: COLORS.yellow,
+    borderColor: COLORS.black,
+    borderWidth: 3,
+    gap: 8,
+    marginTop: 22,
+    padding: 14,
+  },
+  stepsLabel: {
+    color: COLORS.black,
+    fontSize: 11,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  stepIntro: {
+    color: COLORS.black,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  stepLine: {
+    color: COLORS.black,
+    fontSize: 14,
+    fontWeight: "700",
+    lineHeight: 19,
+  },
+  buttonRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 24,
   },
   primaryButton: {
     alignItems: "center",
     backgroundColor: COLORS.yellow,
     borderColor: COLORS.blue,
     borderWidth: 3,
+    flex: 1,
     justifyContent: "center",
-    marginTop: 26,
     minHeight: 64,
   },
   primaryButtonText: {
@@ -267,5 +412,28 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "900",
     textTransform: "uppercase",
+  },
+  secondaryButton: {
+    alignItems: "center",
+    backgroundColor: COLORS.blue,
+    borderColor: COLORS.yellow,
+    borderWidth: 3,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 64,
+  },
+  secondaryButtonText: {
+    color: COLORS.white,
+    fontSize: 18,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  supportText: {
+    color: COLORS.white,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+    marginTop: 18,
+    opacity: 0.72,
   },
 });

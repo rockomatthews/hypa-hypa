@@ -1,10 +1,18 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import {
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppIcon } from "../components/AppIcon";
 import { COLORS } from "../theme";
 
-const liveFeed = [
+const feedTemplates = [
   {
     accent: "yellow",
     asset: "HYPE",
@@ -39,8 +47,64 @@ const liveFeed = [
   },
 ] as const;
 
+const feedHandles = [
+  "@northstarflow",
+  "@perpvision",
+  "@spotcartel",
+  "@volumewhale",
+  "@hypewatch",
+  "@vaultpulse",
+  "@liquiditymax",
+  "@bookrunner",
+] as const;
+const feedAssets = ["HYPE", "BTC", "SOL", "PURR", "ETH", "USDC", "HFUN", "UBTC"] as const;
+const PAGE_SIZE = 6;
+const MAX_FEED_ITEMS = 48;
+
+function buildLiveFeed(count: number) {
+  return Array.from({ length: count }, (_, index) => {
+    const template = feedTemplates[index % feedTemplates.length];
+    const asset = feedAssets[index % feedAssets.length];
+    const handle = feedHandles[index % feedHandles.length];
+    const isBuy = index % 3 !== 1;
+    const size = isBuy
+      ? `Bought ${(index + 2) * 140} ${asset}`
+      : `Sold ${(index + 1) * 75} ${asset}`;
+
+    return {
+      ...template,
+      asset,
+      handle,
+      price: template.price,
+      size,
+      time: index < 4 ? template.time : `${index + 2}m ago`,
+    };
+  });
+}
+
 export function LiveScreen() {
   const insets = useSafeAreaInsets();
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const visibleFeed = useMemo(() => buildLiveFeed(visibleCount), [visibleCount]);
+  const hasMoreFeed = visibleCount < MAX_FEED_ITEMS;
+
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!hasMoreFeed) {
+        return;
+      }
+
+      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      const distanceFromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height);
+
+      if (distanceFromBottom < 180) {
+        setVisibleCount((currentCount) =>
+          Math.min(currentCount + PAGE_SIZE, MAX_FEED_ITEMS),
+        );
+      }
+    },
+    [hasMoreFeed],
+  );
 
   return (
     <View style={styles.screen}>
@@ -49,6 +113,8 @@ export function LiveScreen() {
           styles.content,
           { paddingTop: Math.max(insets.top, 12) + 8, paddingBottom: 30 },
         ]}
+        onScroll={handleScroll}
+        scrollEventThrottle={160}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.headerRow}>
@@ -66,12 +132,12 @@ export function LiveScreen() {
         </Text>
 
         <View style={styles.feed}>
-          {liveFeed.map((item) => {
+          {visibleFeed.map((item, index) => {
             const isBlue = item.accent === "blue";
 
             return (
               <View
-                key={`${item.handle}-${item.asset}`}
+                key={`${item.handle}-${item.asset}-${index}`}
                 style={[
                   styles.feedCard,
                   isBlue ? styles.feedCardBlue : styles.feedCardYellow,
@@ -107,6 +173,12 @@ export function LiveScreen() {
               </View>
             );
           })}
+
+          {hasMoreFeed ? (
+            <View style={styles.loadMoreCard}>
+              <Text style={styles.loadMoreText}>Scroll to refresh the live tape</Text>
+            </View>
+          ) : null}
         </View>
       </ScrollView>
     </View>
@@ -252,5 +324,18 @@ const styles = StyleSheet.create({
   textBlackMuted: {
     color: COLORS.black,
     opacity: 0.72,
+  },
+  loadMoreCard: {
+    alignItems: "center",
+    borderColor: COLORS.blue,
+    borderWidth: 3,
+    minHeight: 54,
+    justifyContent: "center",
+  },
+  loadMoreText: {
+    color: COLORS.white,
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
   },
 });

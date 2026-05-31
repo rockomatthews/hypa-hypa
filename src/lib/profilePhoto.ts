@@ -45,7 +45,7 @@ export function useProfilePhoto(): ProfilePhotoState {
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        allowsEditing: true,
+        allowsEditing: false,
         aspect: [1, 1],
         mediaTypes: ["images"],
         quality: 0.9,

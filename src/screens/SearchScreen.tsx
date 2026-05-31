@@ -1,5 +1,7 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,26 +12,29 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppIcon } from "../components/AppIcon";
+import { CoinMark } from "../components/CoinMark";
 import { useHyperCoreSpot } from "../hooks/useHyperCoreSpot";
 import { COLORS } from "../theme";
 
 type SearchScreenProps = {
-  onOpenSwap: () => void;
+  onOpenCoinDetails: (tokenId: string) => void;
   walletAddress?: `0x${string}`;
 };
 
 const quickFilters = ["HYPE", "USDC", "BTC", "SOL"] as const;
+const PAGE_SIZE = 28;
 
-export function SearchScreen({ onOpenSwap, walletAddress }: SearchScreenProps) {
+export function SearchScreen({ onOpenCoinDetails, walletAddress }: SearchScreenProps) {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState("");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const { error, isLoading, swapOptions } = useHyperCoreSpot(walletAddress);
 
   const filteredOptions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
     if (!normalizedQuery) {
-      return swapOptions.slice(0, 20);
+      return swapOptions;
     }
 
     return swapOptions.filter((option) => {
@@ -37,6 +42,30 @@ export function SearchScreen({ onOpenSwap, walletAddress }: SearchScreenProps) {
       return haystacks.some((value) => value.toLowerCase().includes(normalizedQuery));
     });
   }, [query, swapOptions]);
+  const visibleOptions = filteredOptions.slice(0, visibleCount);
+  const hasMoreOptions = visibleCount < filteredOptions.length;
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [query, swapOptions.length]);
+
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!hasMoreOptions) {
+        return;
+      }
+
+      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      const distanceFromBottom = contentSize.height - (contentOffset.y + layoutMeasurement.height);
+
+      if (distanceFromBottom < 180) {
+        setVisibleCount((currentCount) =>
+          Math.min(currentCount + PAGE_SIZE, filteredOptions.length),
+        );
+      }
+    },
+    [filteredOptions.length, hasMoreOptions],
+  );
 
   return (
     <View style={styles.screen}>
@@ -46,6 +75,8 @@ export function SearchScreen({ onOpenSwap, walletAddress }: SearchScreenProps) {
           { paddingTop: Math.max(insets.top, 12) + 8, paddingBottom: 32 },
         ]}
         keyboardShouldPersistTaps="handled"
+        onScroll={handleScroll}
+        scrollEventThrottle={160}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.headerRow}>
@@ -91,34 +122,36 @@ export function SearchScreen({ onOpenSwap, walletAddress }: SearchScreenProps) {
             ? "Loading live spot universe..."
             : error
               ? error
-              : `${swapOptions.length} live swap routes are loaded.`}
+              : `Showing ${visibleOptions.length} of ${filteredOptions.length} live swap routes.`}
         </Text>
 
         <View style={styles.list}>
-          {filteredOptions.map((option) => (
+          {visibleOptions.map((option) => (
             <Pressable
               accessibilityRole="button"
               key={option.tokenId}
-              onPress={onOpenSwap}
+              onPress={() => onOpenCoinDetails(option.tokenId)}
               style={styles.row}
             >
-              <View style={styles.rowBadge}>
-                <Text style={styles.rowBadgeText}>{option.symbol.slice(0, 1)}</Text>
-              </View>
+              <CoinMark initials={option.initials} size={52} symbol={option.symbol} />
 
               <View style={styles.rowCopy}>
                 <Text style={styles.rowTitle}>{option.symbol}</Text>
-                <Text style={styles.rowSubtitle}>{option.displayName}</Text>
+                <Text style={styles.rowSubtitle}>{option.marketCapLabel ?? "MC unavailable"}</Text>
               </View>
 
               <View style={styles.rowMeta}>
                 <Text style={styles.rowValue}>{option.midPrice ? `$${option.midPrice}` : "Live"}</Text>
-                <Text style={styles.rowDetail}>
-                  {option.balanceLabel !== "0" ? `${option.balanceLabel} in wallet` : "Tap to swap"}
-                </Text>
+                <Text style={styles.rowDetail}>{option.priceChangeLabel ?? "24H --"}</Text>
               </View>
             </Pressable>
           ))}
+
+          {hasMoreOptions ? (
+            <View style={styles.loadMoreCard}>
+              <Text style={styles.loadMoreText}>Scroll to load more coins</Text>
+            </View>
+          ) : null}
         </View>
       </ScrollView>
     </View>
@@ -218,20 +251,6 @@ const styles = StyleSheet.create({
     minHeight: 82,
     paddingVertical: 12,
   },
-  rowBadge: {
-    alignItems: "center",
-    backgroundColor: COLORS.blue,
-    borderColor: COLORS.yellow,
-    borderWidth: 3,
-    height: 48,
-    justifyContent: "center",
-    width: 48,
-  },
-  rowBadgeText: {
-    color: COLORS.white,
-    fontSize: 18,
-    fontWeight: "900",
-  },
   rowCopy: {
     flex: 1,
   },
@@ -262,6 +281,20 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginTop: 4,
     textAlign: "right",
+    textTransform: "uppercase",
+  },
+  loadMoreCard: {
+    alignItems: "center",
+    borderColor: COLORS.blue,
+    borderWidth: 3,
+    marginTop: 16,
+    minHeight: 54,
+    justifyContent: "center",
+  },
+  loadMoreText: {
+    color: COLORS.white,
+    fontSize: 12,
+    fontWeight: "900",
     textTransform: "uppercase",
   },
 });

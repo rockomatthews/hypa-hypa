@@ -44,6 +44,37 @@ export type SpotClearinghouseStateResponse = {
   balances: SpotBalance[];
 };
 
+export type TokenDetailsResponse = {
+  circulatingSupply?: string;
+  deployGas?: string;
+  deployTime?: string;
+  deployer?: string;
+  genesis?: {
+    userBalances?: Array<[string, string]>;
+  };
+  markPx?: string;
+  maxSupply?: string;
+  midPx?: string;
+  name?: string;
+  nonCirculatingUserBalances?: Array<[string, string]>;
+  prevDayPx?: string;
+  seededUsdc?: string;
+  totalSupply?: string;
+};
+
+export type CandleSnapshotItem = {
+  T: number;
+  c: string;
+  h: string;
+  i: string;
+  l: string;
+  n: number;
+  o: string;
+  s: string;
+  t: number;
+  v: string;
+};
+
 export type Delegation = {
   amount: string;
   lockedUntilTimestamp: number;
@@ -92,24 +123,54 @@ export type UserFeesResponse = {
   };
   userCrossRate: string;
   userAddRate: string;
-  activeStakingDiscount?: string | null;
-  stakingLink?: string | null;
+  activeStakingDiscount?:
+    | {
+        bpsOfMaxSupply: string;
+        discount: string;
+      }
+    | string
+    | null;
+  stakingLink?:
+    | {
+        stakingUser: string;
+        type: string;
+      }
+    | string
+    | null;
 };
 
-export async function postHyperCoreInfo<T>(body: Record<string, unknown>): Promise<T> {
-  const response = await fetch(INFO_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
+function wait(milliseconds: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
   });
+}
 
-  if (!response.ok) {
-    throw new Error(`HyperCore info request failed with status ${response.status}.`);
+export async function postHyperCoreInfo<T>(body: Record<string, unknown>): Promise<T> {
+  let lastStatus: number | null = null;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await fetch(INFO_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (response.ok) {
+      return (await response.json()) as T;
+    }
+
+    lastStatus = response.status;
+
+    if (response.status !== 429 || attempt === 2) {
+      break;
+    }
+
+    await wait(500 * (attempt + 1));
   }
 
-  return (await response.json()) as T;
+  throw new Error(`HyperCore info request failed with status ${lastStatus ?? "unknown"}.`);
 }
 
 export function formatCompactAmount(rawValue: string, maximumFractionDigits = 4) {
